@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+langgraph
+langchain-anthropic
+e2b-code-interpreter
+pandas
+pyarrow          
+duckdb
+openpyxl         
+python-multipart
+pydantic
+python-dotenv
