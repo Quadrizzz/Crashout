@@ -46,10 +46,17 @@ async def chat(
 
     assistant_message_id = str(uuid.uuid4())
 
+    messages = []
+
+    if len(request.messages) > 10:
+        messages = request.messages[-10]
+    else:
+        messages = request.messages
+
     state = AgentState(
         parquet_path=request.parquet_path,
         dataset_profile=request.dataset_profile,
-        messages=request.messages[-10],
+        messages=messages,
         current_user_message=request.message
     )
 

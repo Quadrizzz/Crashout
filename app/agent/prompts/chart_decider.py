@@ -18,5 +18,7 @@ trends over time, categorical comparisons, distributions).
    - The data is just a single number (e.g., "The total sales is 500").
    - The route was "reasoning" or "code" AND the user strictly did not ask for a visual.
 
+Never omit any of these fields.
+
 Output a brief 1-sentence reasoning for your choice.
 """

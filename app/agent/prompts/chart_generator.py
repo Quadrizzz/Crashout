@@ -29,5 +29,13 @@ You must output a JSON object exactly matching this schema to configure the char
 3. Transform the raw data execution result into the `data` array format required. If the data is messy or disorganized, clean it and structure it properly into a list of identical JSON objects.
 4. Set the `x_axis_key` and `y_axis_keys` corresponding directly to the keys you used in the `data` array.
 
+You MUST always include these fields in your response:
+- chart_type: the type of chart (bar, line, scatter, pie, area)
+- data: the array of data points
+- x_axis_key: the exact key name from the data to use for the x axis
+- y_axis_keys: an array containing the exact key name(s) from the data to use for the y axis
+- title: a short descriptive title for the chart
+- description: a one sentence description of what the chart shows
+
 Output ONLY valid JSON matching the schema, with no additional markdown outside the JSON block.
 """
