@@ -13,7 +13,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Next.js dev server
+    allow_origins=[
+        "http://localhost:3000",                        # local dev
+        "https://crashout-frontend.vercel.app",         # production
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
