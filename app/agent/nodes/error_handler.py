@@ -1,9 +1,9 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-from app.llm import Gemini
+from app.llm import Gemini, extract_text_content
 from app.agent.prompts.error_handler import ERROR_HANDLER_SYSTEM_PROMPT
 from app.agent.state import AgentState
 
-llm = Gemini(model="gemini-2.5-flash").llm
+llm = Gemini().llm
 
 async def run(state: AgentState) -> AgentState:
     """
@@ -28,8 +28,10 @@ async def run(state: AgentState) -> AgentState:
     ])
     
     # Prepend the LLM's explanation to the raw error so the code_writer sees it clearly
-    enhanced_error = f"{result.content}\n\n[RAW TRACE]:\n{state.execution_error}"
+    explanation = extract_text_content(result.content)
+    enhanced_error = f"{explanation}\n\n[RAW TRACE]:\n{state.execution_error}"
     
     return state.model_copy(update={
         "execution_error": enhanced_error
     })
+

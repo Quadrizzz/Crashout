@@ -1,12 +1,19 @@
 # app/api/routes/report.py
+import asyncio
+from io import BytesIO
+import logging
+import xml.sax.saxutils as saxutils
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.db.deps import get_db
 from app.db.models import User, Session, DatasetProfile, Message, AnalysisResult
 from app.api.routes.auth import get_current_user
-from app.llm import Gemini
+from app.llm import Gemini, extract_text_content
 from langchain_core.messages import HumanMessage, SystemMessage
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -14,23 +21,24 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from io import BytesIO
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — required for server use
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-llm = Gemini(model="gemini-2.5-flash").llm
+llm = Gemini().llm
 
 INDIGO = "#6366f1"
 PURPLE = "#8b5cf6"
 CHART_COLORS = ["#6366f1", "#8b5cf6", "#a78bfa", "#c4b5fd", "#ddd6fe"]
-BG_COLOR = "#0f0f14"
-GRID_COLOR = "#1f2937"
-TEXT_COLOR = "#9ca3af"
+
+
+def _escape(text: str | None) -> str:
+    if not text:
+        return ""
+    return saxutils.escape(str(text))
 
 
 def _render_chart(chart_config: dict) -> BytesIO | None:
@@ -54,7 +62,7 @@ def _render_chart(chart_config: dict) -> BytesIO | None:
         ax.set_facecolor("#fafafa")
 
         if chart_type == "bar":
-            bars = ax.bar(x_vals, y_vals, color=INDIGO, edgecolor="white", linewidth=0.5, width=0.6)
+            ax.bar(x_vals, y_vals, color=INDIGO, edgecolor="white", linewidth=0.5, width=0.6)
             ax.set_xlabel(x_key, fontsize=8, color="#6b7280")
             ax.set_ylabel(y_key, fontsize=8, color="#6b7280")
             ax.tick_params(axis="x", rotation=20, labelsize=7)
@@ -114,7 +122,7 @@ def _render_chart(chart_config: dict) -> BytesIO | None:
         return buf
 
     except Exception as e:
-        print(f"Chart render error: {e}")
+        logger.error(f"Chart render error: {e}")
         plt.close("all")
         return None
 
@@ -146,7 +154,7 @@ async def _generate_report_narrative(
         )),
     ])
 
-    return response.content
+    return extract_text_content(response.content)
 
 
 def _build_pdf(
@@ -202,7 +210,7 @@ def _build_pdf(
 
     # header
     elements.append(Paragraph("Analysis Report", title_style))
-    elements.append(Paragraph(filename, subtitle_style))
+    elements.append(Paragraph(_escape(filename), subtitle_style))
     elements.append(Spacer(1, 4 * mm))
     elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#6366f1")))
     elements.append(Spacer(1, 6 * mm))
@@ -212,12 +220,13 @@ def _build_pdf(
     overview_data = [
         [Paragraph("Rows", label_style), Paragraph(f"{profile.row_count:,}", body_style)],
         [Paragraph("Columns", label_style), Paragraph(str(profile.column_count), body_style)],
-        [Paragraph("Summary", label_style), Paragraph(profile.summary, body_style)],
+        [Paragraph("Summary", label_style), Paragraph(_escape(profile.summary), body_style)],
     ]
     if profile.quality_flags:
+        escaped_flags = "<br/>".join([_escape(flag) for flag in profile.quality_flags])
         overview_data.append([
             Paragraph("Quality Flags", label_style),
-            Paragraph("<br/>".join(profile.quality_flags), body_style)
+            Paragraph(escaped_flags, body_style)
         ])
 
     overview_table = Table(overview_data, colWidths=[40 * mm, 130 * mm])
@@ -241,7 +250,7 @@ def _build_pdf(
     elements.append(Paragraph("Executive Summary", section_style))
     elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#e5e7eb")))
     elements.append(Spacer(1, 3 * mm))
-    elements.append(Paragraph(narrative, body_style))
+    elements.append(Paragraph(_escape(narrative), body_style))
     elements.append(Spacer(1, 4 * mm))
 
     # Q&A insights with charts
@@ -251,8 +260,8 @@ def _build_pdf(
         elements.append(Spacer(1, 3 * mm))
 
         for i, pair in enumerate(qa_pairs, 1):
-            elements.append(Paragraph(f"Q{i}: {pair['question']}", label_style))
-            elements.append(Paragraph(pair["answer"], answer_style))
+            elements.append(Paragraph(f"Q{i}: {_escape(pair['question'])}", label_style))
+            elements.append(Paragraph(_escape(pair["answer"]), answer_style))
 
             # render chart image if chart config exists
             if pair.get("chart_config"):
@@ -262,7 +271,7 @@ def _build_pdf(
                     elements.append(img)
                     elements.append(Spacer(1, 3 * mm))
                 elif pair.get("chart_title"):
-                    elements.append(Paragraph(f"Chart: {pair['chart_title']}", chart_note_style))
+                    elements.append(Paragraph(f"Chart: {_escape(pair['chart_title'])}", chart_note_style))
 
             elements.append(Spacer(1, 2 * mm))
 
@@ -299,6 +308,7 @@ async def generate_report(
 
     messages_result = await db.execute(
         select(Message)
+        .options(selectinload(Message.analysis_result))
         .where(Message.session_id == session_id)
         .order_by(Message.created_at.asc())
     )
@@ -309,13 +319,7 @@ async def generate_report(
     for i, msg in enumerate(messages):
         if msg.role == "user" and i + 1 < len(messages) and messages[i + 1].role == "assistant":
             assistant_msg = messages[i + 1]
-
-            ar_result = await db.execute(
-                select(AnalysisResult).where(AnalysisResult.message_id == assistant_msg.id)
-            )
-            ar = ar_result.scalar_one_or_none()
-
-            chart_config = ar.chart_config if ar else None
+            chart_config = assistant_msg.analysis_result.chart_config if assistant_msg.analysis_result else None
             chart_title = None
             if chart_config:
                 chart_title = chart_config.get("title") or chart_config.get("chart_title")
@@ -331,7 +335,7 @@ async def generate_report(
         raise HTTPException(status_code=400, detail="No analysis found for this session")
 
     narrative = await _generate_report_narrative(session.filename, profile, qa_pairs)
-    pdf_buffer = _build_pdf(session.filename, profile, narrative, qa_pairs)
+    pdf_buffer = await asyncio.to_thread(_build_pdf, session.filename, profile, narrative, qa_pairs)
 
     filename = session.filename.rsplit(".", 1)[0]
 
@@ -341,4 +345,4 @@ async def generate_report(
         headers={
             "Content-Disposition": f'inline; filename="{filename}_report.pdf"'
         }
-    )
+    )

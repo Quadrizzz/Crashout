@@ -6,13 +6,11 @@ from app.agent.state import AgentState
 from app.llm import Gemini
 from app.agent.prompts import ROUTER_SYSTEM_PROMPT
 
-llm = Gemini(model="gemini-2.5-flash").llm
-
 class RouterOutput(BaseModel):
     reasoning: str = Field(description="Explanation for the chosen route")
     route: Literal["reasoning", "code", "hybrid", "chart"] = Field(description="The chosen execution path")
 
-structured_llm = llm.with_structured_output(RouterOutput)
+structured_llm = Gemini().with_structured_output(RouterOutput)
 
 async def run(state: AgentState) -> AgentState:
     # Inject dataset profile into the system prompt context

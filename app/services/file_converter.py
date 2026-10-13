@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 from pathlib import Path
 import json
@@ -7,8 +8,9 @@ import tempfile
 
 import pandas as pd
 from app.services.storage import uploadtoS3
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB limit
 
 SUPPORTED_EXTENSIONS = {
     ".csv",
@@ -51,6 +53,16 @@ def _read_dataframe(file_bytes: bytes, extension: str) -> pd.DataFrame:
     raise HTTPException(status_code=400, detail=f"Unsupported file type: {extension}")
 
 
+def _process_and_save_parquet(file_bytes: bytes, extension: str, session_id: str) -> Path:
+    df = _read_dataframe(file_bytes, extension)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Uploaded file has no rows.")
+
+    parquet_path = Path(tempfile.gettempdir()) / f"{session_id}.parquet"
+    df.to_parquet(parquet_path, engine="pyarrow", index=False)
+    return parquet_path
+
+
 async def convert_to_parquet(file: UploadFile, session_id: str) -> str:
     filename = file.filename or ""
     extension = Path(filename).suffix.lower()
@@ -62,23 +74,34 @@ async def convert_to_parquet(file: UploadFile, session_id: str) -> str:
             detail=f"Unsupported file type '{extension or '(none)'}'. Supported: {supported}",
         )
 
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+
+    parquet_path: Path | None = None
     try:
-        file_bytes = await file.read()
-        if not file_bytes:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-
-        df = _read_dataframe(file_bytes, extension)
-        if df.empty:
-            raise HTTPException(status_code=400, detail="Uploaded file has no rows.")
-
-        parquet_path = Path(tempfile.gettempdir()) / f"{session_id}.parquet"
-        df.to_parquet(parquet_path, engine="pyarrow", index=False)
-        s3Url = uploadtoS3(parquet_path)
-        return s3Url
+        parquet_path = await asyncio.to_thread(
+            _process_and_save_parquet, file_bytes, extension, session_id
+        )
+        s3_url = await asyncio.to_thread(uploadtoS3, parquet_path)
+        return s3_url
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to convert '{filename}' to parquet: {exc}",
+            detail=f"Failed to process '{filename}': {exc}",
         ) from exc
+    finally:
+        if parquet_path and parquet_path.exists():
+            try:
+                parquet_path.unlink()
+            except Exception:
+                pass
+

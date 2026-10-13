@@ -5,14 +5,12 @@ from app.llm import Gemini
 from app.agent.prompts import CODE_WRITER_SYSTEM_PROMPT
 from app.agent.state import AgentState
 
-llm = Gemini(model="gemini-2.5-flash").llm
-
 class CodeWriterOutput(BaseModel):
     language: str = Field(description="The language of the code to be generated ('sql' for simple queries, 'python' otherwise)")
     code: str = Field(description="The raw, executable code in the chosen language")
     reasoning: str = Field(description="Explanation of the approach")
 
-structured_llm = llm.with_structured_output(CodeWriterOutput)
+structured_llm = Gemini().with_structured_output(CodeWriterOutput)
 
 async def run(state: AgentState) -> AgentState:
     profile_str = json.dumps(state.dataset_profile, indent=2)
@@ -43,9 +41,24 @@ async def run(state: AgentState) -> AgentState:
         HumanMessage(content=user_message)
     ])
     
+    cleaned_code = result.code.strip()
+    if cleaned_code.startswith("```"):
+        lines = cleaned_code.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        cleaned_code = "\n".join(lines).strip()
+
+    lang = result.language.lower().strip()
+    if "sql" in lang:
+        lang = "sql"
+    else:
+        lang = "python"
+
     # Clear any previous execution errors and update the code
     return state.model_copy(update={
-        "generated_code": result.code,
-        "code_language": result.language,
+        "generated_code": cleaned_code,
+        "code_language": lang,
         "execution_error": ""
     })

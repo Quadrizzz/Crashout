@@ -43,14 +43,22 @@ async def upload_file(
     await db.flush()
 
     # Save dataset profile to DB
+    overview = profile.get("overview") if isinstance(profile, dict) else None
+    if isinstance(overview, dict):
+        row_count = overview.get("row_count", 0)
+        column_count = overview.get("column_count", 0)
+    else:
+        row_count = profile.get("row_count", 0) if isinstance(profile, dict) else 0
+        column_count = profile.get("column_count", 0) if isinstance(profile, dict) else 0
+
     dataset_profile = DatasetProfile(
         session_id=session_id,
-        row_count=profile.get("overview").get("row_count", 0),
-        column_count=profile.get("overview").get("column_count", 0),
-        summary=profile.get("summary", ""),
-        quality_flags=profile.get("quality_flags", []),
-        columns=profile.get("columns", {}),
-        suggested_analysis=profile.get("suggested_analysis", [])
+        row_count=row_count,
+        column_count=column_count,
+        summary=profile.get("summary", "") if isinstance(profile, dict) else "",
+        quality_flags=profile.get("quality_flags", []) if isinstance(profile, dict) else [],
+        columns=profile.get("columns", {}) if isinstance(profile, dict) else {},
+        suggested_analysis=profile.get("suggested_analysis", []) if isinstance(profile, dict) else []
     )
     db.add(dataset_profile)
     await db.commit()

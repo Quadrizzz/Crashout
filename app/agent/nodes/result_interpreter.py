@@ -1,9 +1,9 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-from app.llm import Gemini
+from app.llm import Gemini, extract_text_content
 from app.agent.prompts.result_interpreter import RESULT_INTERPRETER_SYSTEM_PROMPT
 from app.agent.state import AgentState
 
-llm = Gemini(model="gemini-2.5-flash").llm
+llm = Gemini().llm
 
 async def run(state: AgentState) -> AgentState:
     """
@@ -25,5 +25,6 @@ async def run(state: AgentState) -> AgentState:
     ])
     
     return state.model_copy(update={
-        "interpreted_result": result.content
+        "interpreted_result": extract_text_content(result.content)
     })
+

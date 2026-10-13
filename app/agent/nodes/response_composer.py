@@ -1,10 +1,10 @@
 import json
 from langchain_core.messages import HumanMessage, SystemMessage
-from app.llm import Gemini
+from app.llm import Gemini, extract_text_content
 from app.agent.prompts.response_composer import RESPONSE_COMPOSER_SYSTEM_PROMPT
 from app.agent.state import AgentState
 
-llm = Gemini(model="gemini-2.5-flash").llm
+llm = Gemini().llm
 
 async def run(state: AgentState) -> AgentState:
     profile_str = json.dumps(state.dataset_profile, indent=2)
@@ -32,4 +32,5 @@ async def run(state: AgentState) -> AgentState:
         HumanMessage(content=user_message)
     ])
     
-    return state.model_copy(update={"final_response": result.content})
+    return state.model_copy(update={"final_response": extract_text_content(result.content)})
+

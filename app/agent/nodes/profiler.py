@@ -1,3 +1,4 @@
+import asyncio
 import json
 import pandas as pd
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -6,12 +7,10 @@ from app.agent.state import AgentState
 from app.llm import Gemini
 from app.agent.prompts import PROFILER_SYSTEM_PROMPT
 
-llm = Gemini(model="gemini-2.5-flash").llm
-
 class ProfilerOutput(BaseModel):
     profile: dict
 
-structured_llm = llm.with_structured_output(ProfilerOutput)
+structured_llm = Gemini().with_structured_output(ProfilerOutput)
 
 def _compute_statistics(df: pd.DataFrame) -> dict:
     quality_flags = []
@@ -74,15 +73,20 @@ def _safe_val(val):
         return val.item()
     return val
 
+def _read_and_stats(parquet_path: str) -> dict:
+    df = pd.read_parquet(parquet_path)
+    return _compute_statistics(df)
+
 async def run(state: AgentState) -> AgentState:
-    df = pd.read_parquet(state.parquet_path)
-    stats = _compute_statistics(df)
+    # If dataset_profile is already present (e.g. from DB / session), skip re-profiling
+    if state.dataset_profile and state.current_user_message != "__profile__":
+        return state
+
+    stats = await asyncio.to_thread(_read_and_stats, state.parquet_path)
     
     result = await structured_llm.ainvoke([
         SystemMessage(content=PROFILER_SYSTEM_PROMPT),
         HumanMessage(content=json.dumps(stats, indent=2))
     ])
-
-    print(result.profile)
     
-    return state.model_copy(update={"dataset_profile": result.profile})
+    return state.model_copy(update={"dataset_profile": result.profile})
